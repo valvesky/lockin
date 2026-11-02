@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "valvesky.lockin",
+  "name": "Lock-In",
+  "version": "0.1.0",
+  "author": "valvesky",
+  "description": "Commit to your work. Deep Work and Pomodoro with a workspace guard.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Lock-In",
+    "description": "Deep Work, Pomodoro, and a little accountability",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "centerEnd"
+  }
+}

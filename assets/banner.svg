@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title desc">
+  <title id="title">Lock-In</title>
+  <desc id="desc">Less elsewhere. More here. Deep Work and Pomodoro for Omarchy.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#e8e6dc" stroke-opacity=".045"/></pattern>
+  </defs>
+  <path fill="#141716" d="M0 0h1280v420H0z"/>
+  <path fill="url(#grid)" d="M720 0h560v420H720z"/>
+  <path d="M64 55h16m-16 0v16m32-16h16v16m0 16v16H96m-16 0H64V87" stroke="#d4f57a" stroke-width="3" fill="none"/>
+  <path fill="#d4f57a" d="M84 75h8v8h-8z"/>
+  <text x="136" y="87" font-family="monospace" font-size="15" fill="#969d94" letter-spacing="4">MAKE TIME. STAY WITH IT.</text>
+  <text x="60" y="233" font-family="Arial, Helvetica, sans-serif" font-size="130" font-weight="800" fill="#e8e6dc" letter-spacing="-7">LOCK-IN</text>
+  <text x="66" y="282" font-family="monospace" font-size="22" fill="#a4ad9f">Less elsewhere. More here.</text>
+  <path d="M66 333h610" stroke="#e8e6dc" stroke-opacity=".18"/>
+  <text x="66" y="371" font-family="monospace" font-size="14" fill="#d4f57a" letter-spacing="2">DEEP WORK</text>
+  <text x="224" y="371" font-family="monospace" font-size="14" fill="#646e64">/</text>
+  <text x="256" y="371" font-family="monospace" font-size="14" fill="#d4f57a" letter-spacing="2">POMODORO</text>
+  <text x="519" y="371" font-family="monospace" font-size="12" fill="#969d94" letter-spacing="1">FOR OMARCHY</text>
+  <g stroke="#d4f57a" stroke-width="3" fill="none">
+    <path d="M830 78h47m-47 0v47m337-47h47v47m0 170v47h-47m-290 0h-47v-47"/>
+  </g>
+  <text x="1022" y="230" text-anchor="middle" font-family="monospace" font-size="76" fill="#d4f57a" letter-spacing="-4">50:00</text>
+  <text x="1022" y="276" text-anchor="middle" font-family="monospace" font-size="12" fill="#969d94" letter-spacing="5">ONE THING AT A TIME</text>
+  <path d="M870 306h304" stroke="#e8e6dc" stroke-opacity=".14" stroke-width="3"/>
+  <path d="M870 306h174" stroke="#d4f57a" stroke-width="3"/>
+</svg>

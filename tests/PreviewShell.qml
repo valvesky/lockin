@@ -1,0 +1,110 @@
+import QtQuick
+import QtTest
+import Quickshell
+import qs.Commons as Commons
+import "@ROOT@" as LockIn
+
+ShellRoot {
+    id: harness
+    property string output: "@OUTPUT@"
+    property string lastAction: ""
+    property var lastDetails: ({})
+    property var config: ({mode: "deepwork", deepMinutes: 50, focusMinutes: 25, breakMinutes: 5,
+        longBreakMinutes: 15, longBreakEvery: 4, rounds: 4, guard: true, intention: ""})
+    property QtObject mock: QtObject {
+        property bool available: true
+        property string failure: ""
+        property var state: ({state: "idle", active: false, remaining: 0, settings: harness.config,
+            todayMinutes: 75, todaySessions: 2, error: "", guardError: ""})
+        function send(action, details) { harness.lastAction = action; harness.lastDetails = details || {} }
+    }
+    FloatingWindow {
+        id: window
+        visible: true
+        implicitWidth: 484
+        implicitHeight: card.height
+        color: Commons.Color.background
+        Rectangle {
+            id: card
+            width: 484
+            height: view.implicitHeight + 64
+            color: Commons.Color.background
+            LockIn.FocusView { id: view; x: 32; y: 32; width: 420; service: harness.mock }
+        }
+        TestCase {
+            name: "LockInPanel"
+            when: window.visible
+            function find(item, name) {
+                if (item.objectName === name) return item
+                for (let child of item.children || []) {
+                    const match = find(child, name)
+                    if (match) return match
+                }
+                return null
+            }
+            function capture(name) {
+                wait(100)
+                let saved = false
+                const suffix = Quickshell.env("LOCKIN_PREVIEW_LANGUAGE") === "pt" ? "-pt" : ""
+                verify(card.grabToImage(function(result) { saved = result.saveToFile(harness.output + "/" + name + suffix + ".png") }))
+                tryVerify(function() { return saved }, 2000)
+            }
+            function test_panel() {
+                wait(350)
+                Commons.Color.foreground = "#e8e6dc"
+                Commons.Color.background = "#141716"
+                Commons.Color.accent = "#d4f57a"
+                Commons.Color.urgent = "#e59888"
+                Commons.Style.fontFamily = "JetBrainsMono Nerd Font"
+                Commons.Style.cornerRadius = 0
+                capture("deepwork")
+                view.mode = "pomodoro"
+                capture("pomodoro")
+                view.mode = "deepwork"
+                const start = find(view, "startButton")
+                verify(start !== null)
+                mouseClick(start)
+                compare(harness.lastAction, "start")
+                compare(harness.lastDetails.options.deepMinutes, 50)
+                harness.lastAction = ""
+                view.forceActiveFocus()
+                keyClick(Qt.Key_Space)
+                compare(harness.lastAction, "start")
+                mock.state = {state: "focus", active: true, remaining: 1368, progress: 0.544,
+                    phase: "focus", mode: "deepwork", intention: "Ship the thing.", guard: true,
+                    workspace: {id: 3, name: "3"}, round: 1, rounds: 1, settings: harness.config,
+                    todayMinutes: 75, todaySessions: 2, error: "", guardError: ""}
+                capture("focus")
+                harness.lastAction = ""
+                view.forceActiveFocus()
+                keyClick(Qt.Key_Space)
+                compare(harness.lastAction, "")
+                const markup = '<img src="https://example.invalid/tracker">'
+                mock.state = Object.assign({}, mock.state, {intention: markup})
+                wait(20)
+                function checkText(item) {
+                    if (item.text === markup) { compare(item.textFormat, Text.PlainText); return true }
+                    for (const child of item.children || []) if (checkText(child)) return true
+                    return false
+                }
+                verify(checkText(view), "The intention heading must render user text as plain text")
+                mock.state = Object.assign({}, mock.state, {intention: "Ship the thing."})
+                view.unlocking = true
+                capture("unlock")
+                const unlock = find(view, "unlockField")
+                unlock.text = "UNLOCK"
+                unlock.forceActiveFocus()
+                keyClick(Qt.Key_Return)
+                compare(harness.lastAction, "unlock")
+                compare(harness.lastDetails.confirmation, "UNLOCK")
+                view.unlocking = false
+                mock.state = Object.assign({}, mock.state, {state: "break", phase: "short_break", mode: "pomodoro",
+                    remaining: 300, progress: 0, round: 2, rounds: 4, guard: false})
+                capture("break")
+                mock.state = Object.assign({}, mock.state, {state: "complete", active: false, remaining: 0})
+                capture("complete")
+                console.log("Panel checks passed")
+            }
+        }
+    }
+}

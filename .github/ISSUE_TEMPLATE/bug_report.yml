@@ -1,0 +1,23 @@
+name: Bug report
+description: Something got in the way of locking in.
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include what you expected and how to reproduce it.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Your setup
+      description: Omarchy, Hyprland, Quickshell, and Python versions; default or custom bar; monitor count.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove your session intention and any personal paths before sharing.
+      render: text

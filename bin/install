@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+command -v python3 >/dev/null || { echo 'Lock-In needs Python 3.' >&2; exit 1; }
+command -v omarchy >/dev/null || { echo 'Lock-In needs Omarchy with shell plugin support.' >&2; exit 1; }
+omarchy plugin validate .
+target="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/valvesky.lockin"
+source_dir="$(pwd -P)"
+if [[ -e "$target" || -L "$target" ]]; then
+  [[ "$(readlink -f -- "$target")" == "$source_dir" ]] || { echo "Already installed at $target. Use omarchy plugin update valvesky.lockin." >&2; exit 1; }
+else
+  mkdir -p "$(dirname "$target")"
+  ln -s "$source_dir" "$target"
+fi
+omarchy-shell shell rescanPlugins
+for ((attempt = 0; attempt < 40; attempt++)); do
+  if omarchy plugin list --json | jq -e 'any(.[]; .id == "valvesky.lockin")' >/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+omarchy plugin enable valvesky.lockin --section right
