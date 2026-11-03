@@ -6,7 +6,7 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from engine import DEFAULTS, Engine, Invalid
+from engine import DEFAULTS, Engine, Invalid, options
 
 
 class EngineTests(unittest.TestCase):
@@ -113,6 +113,21 @@ class EngineTests(unittest.TestCase):
             self.start(deepMinutes=1)
             self.advance(60)
         self.assertEqual(len(self.engine.document()["history"]), 200)
+
+    def test_site_block_follows_focus_phases_and_defaults_off(self):
+        self.assertFalse(DEFAULTS["blockSites"])
+        self.assertFalse(self.engine.snapshot()["blockSites"])
+        self.start(mode="pomodoro", blockSites=True)
+        self.assertTrue(self.engine.snapshot()["blockSites"])
+        self.assertFalse(self.advance(25 * 60)["blockSites"])
+        self.assertTrue(self.advance(5 * 60)["blockSites"])
+        self.engine.unlock("UNLOCK")
+        self.assertFalse(self.engine.snapshot()["blockSites"])
+        with self.assertRaisesRegex(Invalid, "invalid_options"):
+            options({"blockSites": "yes"})
+        legacy = self.engine.document()
+        del legacy["settings"]["blockSites"]
+        self.assertFalse(Engine(legacy).settings["blockSites"])
 
     def test_week_tracks_live_focus_and_freezes_on_break(self):
         self.start(mode="pomodoro")

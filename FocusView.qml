@@ -16,6 +16,7 @@ FocusScope {
     property int longBreakMinutes: 15
     property int rounds: 4
     property bool guard: true
+    property bool blockSites: false
     property bool unlocking: false
     property bool help: false
     property bool initialized: false
@@ -39,6 +40,7 @@ FocusScope {
         longBreakMinutes = cfg.longBreakMinutes || 15
         rounds = cfg.rounds || 4
         guard = cfg.guard !== false
+        blockSites = cfg.blockSites === true
         intention.text = cfg.intention || ""
         initialized = true
     }
@@ -50,7 +52,7 @@ FocusScope {
         if (active || !available) return
         service.send("start", {options: {mode: mode, deepMinutes: deepMinutes, focusMinutes: focusMinutes,
             breakMinutes: breakMinutes, longBreakMinutes: longBreakMinutes, longBreakEvery: 4,
-            rounds: rounds, guard: guard, intention: intention.text}})
+            rounds: rounds, guard: guard, blockSites: blockSites, intention: intention.text}})
     }
     function clock(seconds) {
         return Commons.I18n.formatNumber(Math.floor(seconds / 60)) + ":"
@@ -249,6 +251,41 @@ FocusScope {
             onClicked: root.guard = !root.guard
         }
 
+        Toggle {
+            objectName: "sitesToggle"
+            width: parent.width
+            visible: !root.active
+            label: strings.t("sites.label")
+            checked: root.blockSites
+            titleSize: Style.font.body
+            foreground: root.ink
+            onClicked: root.blockSites = !root.blockSites
+        }
+
+        Column {
+            visible: !root.active && root.blockSites && root.available && !root.session.sitesReady
+            width: parent.width
+            spacing: Style.space(8)
+            PlainLabel {
+                width: parent.width
+                text: strings.t("sites.setupHint")
+                color: root.muted
+                wrapMode: Text.WordWrap
+                font.pixelSize: Style.font.bodySmall
+            }
+            Button {
+                objectName: "sitesSetup"
+                width: parent.width
+                text: strings.t(root.session.sitesSetup ? "sites.waiting" : "sites.setup")
+                bordered: true
+                focusable: true
+                foreground: root.ink
+                enabled: !root.session.sitesSetup
+                opacity: enabled ? 1 : 0.45
+                onClicked: root.service.send("setupSites")
+            }
+        }
+
         PlainLabel {
             width: parent.width
             visible: root.active
@@ -256,6 +293,17 @@ FocusScope {
                 : root.session.guard ? strings.t("guard.active").arg(Commons.I18n.formatNumber(root.session.workspace ? root.session.workspace.id : 0))
                 : strings.t(root.session.state === "break" ? "guard.break" : "guard.timerOnly")
             color: root.session.guardError ? Commons.Color.urgent : root.muted
+            wrapMode: Text.WordWrap
+            font.pixelSize: Style.font.bodySmall
+            horizontalAlignment: Text.AlignHCenter
+        }
+
+        PlainLabel {
+            objectName: "sitesStatus"
+            width: parent.width
+            visible: (root.active && !!root.session.blockSites) || !!root.session.sitesError
+            text: root.session.sitesError ? root.errorText(root.session.sitesError) : strings.t("sites.active")
+            color: root.session.sitesError ? Commons.Color.urgent : root.muted
             wrapMode: Text.WordWrap
             font.pixelSize: Style.font.bodySmall
             horizontalAlignment: Text.AlignHCenter

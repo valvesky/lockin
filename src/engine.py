@@ -11,7 +11,7 @@ import uuid
 DEFAULTS = {
     "mode": "deepwork", "deepMinutes": 50, "focusMinutes": 25,
     "breakMinutes": 5, "longBreakMinutes": 15, "longBreakEvery": 4,
-    "rounds": 4, "guard": True, "intention": "",
+    "rounds": 4, "guard": True, "blockSites": False, "intention": "",
 }
 
 
@@ -31,7 +31,7 @@ def options(raw):
         value = result[key]
         if type(value) is not int or not 1 <= value <= maximum:
             raise Invalid("invalid_duration")
-    if type(result["guard"]) is not bool:
+    if type(result["guard"]) is not bool or type(result["blockSites"]) is not bool:
         raise Invalid("invalid_options")
     if not isinstance(result["intention"], str) or len(result["intention"]) > 140:
         raise Invalid("invalid_intention")
@@ -235,7 +235,7 @@ class Engine:
         week = self.week(now)
         state = {"state": "idle", "active": False, "remaining": 0, "progress": 0,
                  "round": 0, "rounds": 0, "phase": "", "intention": "", "workspace": None,
-                 "guard": False, "settings": copy.deepcopy(self.settings),
+                 "guard": False, "blockSites": False, "settings": copy.deepcopy(self.settings),
                  "week": week,
                  "wave": self.wave(now),
                  "todayMinutes": int(week[-1]["seconds"] // 60),
@@ -258,7 +258,8 @@ class Engine:
                               "active": True, "remaining": math.ceil(remaining),
                               "progress": max(0, min(1, 1 - remaining / duration)),
                               "phase": phase["kind"], "round": phase["round"],
-                              "guard": config["guard"] and phase["kind"] == "focus"})
+                              "guard": config["guard"] and phase["kind"] == "focus",
+                              "blockSites": config["blockSites"] and phase["kind"] == "focus"})
                 return state
         state.update({"state": "complete", "progress": 1})
         return state

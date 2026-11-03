@@ -17,6 +17,7 @@ import tempfile
 import time
 
 from engine import Engine, Invalid, options
+import sites
 
 
 class Store:
@@ -134,13 +135,109 @@ class Hyprland:
             self.focus(workspace["id"])
 
 
+class Sites:
+    """Places and lifts the focus-time social media block through the root helper.
+
+    A service only lifts a block it placed: a marker in its state directory
+    records ownership, so a crash or reboot is cleaned up on the next start and
+    a second service (or a test) never touches someone else's block.
+    """
+
+    SETUP = Path(__file__).resolve().with_name("site-block-setup")
+
+    def __init__(self, directory, hosts=sites.HOSTS, helper=sites.HELPER):
+        self.marker = Path(directory) / "sites-blocked"
+        self.hosts = Path(hosts)
+        self.helper = helper
+        self.stamp = None
+        self.retry_at = 0.0
+        self.setup = None
+        self.ready = self.allowed()
+
+    def allowed(self):
+        # The long listing names the matched rule's tags; only Lock-In's own
+        # rule grants this command without authentication.
+        try:
+            result = subprocess.run(["sudo", "-n", "-l", "-l", self.helper, "block"],
+                                    capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0 and "!authenticate" in result.stdout
+
+    @property
+    def setting_up(self):
+        return self.setup is not None
+
+    def begin_setup(self):
+        if self.setup is not None or self.ready:
+            return
+        try:
+            self.setup = subprocess.Popen(["pkexec", str(self.SETUP)], stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            raise Invalid("sites_setup_failed") from exc
+
+    def poll_setup(self):
+        if self.setup is None or self.setup.poll() is None:
+            return
+        self.setup = None
+        self.ready = self.allowed()
+        if not self.ready:
+            raise Invalid("sites_setup_failed")
+
+    def helper_run(self, action):
+        if time.monotonic() < self.retry_at:
+            raise Invalid("sites_unavailable")
+        payload = "".join(f"{domain}\n" for domain in sites.DEFAULT_SITES) if action == "block" else ""
+        try:
+            subprocess.run(["sudo", "-n", self.helper, action], input=payload, capture_output=True,
+                           text=True, timeout=10, check=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            # Back off: sudo logs every refused attempt.
+            self.retry_at = time.monotonic() + 30
+            self.ready = self.allowed()
+            raise Invalid("sites_unavailable") from exc
+        self.stamp = None
+
+    def sync(self, want):
+        owned = self.marker.exists()
+        if not want:
+            if owned:
+                self.helper_run("unblock")
+                self.marker.unlink(missing_ok=True)
+            return
+        try:
+            stat = self.hosts.stat()
+            stamp = (stat.st_mtime_ns, stat.st_ino, stat.st_size)
+            # Recheck only when the file changes, e.g. a blocklist tool rewrote it.
+            if owned and stamp == self.stamp:
+                return
+            present = sites.blocked(self.hosts.read_bytes())
+        except OSError as exc:
+            raise Invalid("sites_unavailable") from exc
+        if not present:
+            self.marker.touch(mode=0o600)
+            self.helper_run("block")
+        else:
+            self.marker.touch(mode=0o600)
+            self.stamp = stamp
+
+    def release(self):
+        try:
+            self.sync(False)
+        except Invalid:
+            pass
+
+
 class Service:
-    def __init__(self, store, hyprland=None):
+    def __init__(self, store, hyprland=None, blocker=None):
         self.store = store
         self.engine = store.load()
         self.hypr = hyprland or Hyprland()
+        self.sites = blocker or Sites(store.directory)
         self.error = ""
         self.guard_error = ""
+        self.sites_error = ""
 
     def command(self, request):
         self.error = ""
@@ -155,6 +252,10 @@ class Service:
                     if self.engine.snapshot()["active"]:
                         raise Invalid("already_active")
                     config = options(request.get("options", {}))
+                    if config["blockSites"] and not self.sites.ready:
+                        self.sites.ready = self.sites.allowed()
+                        if not self.sites.ready:
+                            raise Invalid("sites_setup_required")
                     workspace = None
                     if config["guard"]:
                         workspace = self.hypr.current()
@@ -165,6 +266,9 @@ class Service:
                     self.engine.unlock(request.get("confirmation"))
                 elif action == "reset":
                     self.engine.reset()
+                elif action == "setupSites":
+                    self.sites.begin_setup()
+                    return
                 elif action == "status":
                     return
                 else:
@@ -195,8 +299,20 @@ class Service:
                 self.guard_error = str(exc)
         else:
             self.hypr.disconnect()
+        try:
+            self.sites.poll_setup()
+        except Invalid as exc:
+            self.error = str(exc)
+        self.sites_error = ""
+        try:
+            self.sites.sync(state["blockSites"])
+        except Invalid as exc:
+            self.sites_error = str(exc)
         return {**state, "error": self.error, "guardError": self.guard_error,
-                "guardHealthy": state["guard"] and not self.guard_error}
+                "guardHealthy": state["guard"] and not self.guard_error,
+                "sitesReady": self.sites.ready, "sitesSetup": self.sites.setting_up,
+                "sitesError": self.sites_error,
+                "sitesBlocked": state["blockSites"] and not self.sites_error}
 
 
 def emit(state):
@@ -315,6 +431,9 @@ def serve(store, directory):
                     if not data or any(name in data for name in (b"workspace", b"focusedmon", b"activewindow", b"activespecial")):
                         next_tick = 0
     finally:
+        # Never leave sites blocked behind a stopped service; a restart
+        # mid-session blocks them again on its first tick.
+        service.sites.release()
         selector.close()
         service.hypr.disconnect()
         control.close()

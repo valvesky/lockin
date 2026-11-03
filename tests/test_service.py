@@ -6,9 +6,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from backend import Hyprland, Service, Store
+from backend import Hyprland, Service, Sites, Store
+import sites
 from engine import Engine, Invalid
 
 
@@ -38,6 +40,31 @@ class FakeHyprland:
         self.returns.append(workspace)
 
 
+class FakeSites:
+    def __init__(self):
+        self.ready = True
+        self.setting_up = False
+        self.wanted = []
+        self.fail = False
+
+    def allowed(self):
+        return self.ready
+
+    def begin_setup(self):
+        self.setting_up = True
+
+    def poll_setup(self):
+        pass
+
+    def sync(self, want):
+        if self.fail:
+            raise Invalid("sites_unavailable")
+        self.wanted.append(want)
+
+    def release(self):
+        self.wanted.append(False)
+
+
 class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -45,7 +72,8 @@ class ServiceTests(unittest.TestCase):
         self.store = Store(self.tmp.name)
         self.addCleanup(self.store.close)
         self.hypr = FakeHyprland()
-        self.service = Service(self.store, self.hypr)
+        self.sites = FakeSites()
+        self.service = Service(self.store, self.hypr, self.sites)
 
     def test_atomic_store_roundtrip_and_exclusive_service(self):
         self.service.command({"action": "start", "options": {"guard": False}})
@@ -104,6 +132,36 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(self.service.error, "invalid_command")
             self.assertEqual(self.service.engine.document(), before)
 
+    def test_sites_are_blocked_only_during_focus(self):
+        now = [1_800_000_000]
+        self.service.engine.clock = lambda: now[0]
+        self.service.command({"action": "start", "options": {"mode": "pomodoro", "guard": False, "blockSites": True}})
+        state = self.service.tick()
+        self.assertTrue(state["sitesBlocked"])
+        self.assertEqual(self.sites.wanted[-1], True)
+        now[0] += 1500
+        self.assertFalse(self.service.tick()["sitesBlocked"])
+        self.assertEqual(self.sites.wanted[-1], False)
+        now[0] += 300
+        self.service.tick()
+        self.assertEqual(self.sites.wanted[-1], True)
+        self.service.command({"action": "unlock", "confirmation": "UNLOCK"})
+        self.service.tick()
+        self.assertEqual(self.sites.wanted[-1], False)
+
+    def test_blocking_needs_setup_before_start_and_failures_show(self):
+        self.sites.ready = False
+        self.service.command({"action": "start", "options": {"guard": False, "blockSites": True}})
+        self.assertEqual(self.service.error, "sites_setup_required")
+        self.assertFalse(self.service.tick()["active"])
+        self.service.command({"action": "setupSites"})
+        self.assertTrue(self.service.tick()["sitesSetup"])
+        self.sites.ready = True
+        self.service.command({"action": "start", "options": {"guard": False, "blockSites": True}})
+        self.sites.fail = True
+        state = self.service.tick()
+        self.assertEqual((state["active"], state["sitesError"], state["sitesBlocked"]), (True, "sites_unavailable", False))
+
     def test_bad_state_is_never_overwritten(self):
         self.store.path.write_text("{broken", encoding="utf-8")
         self.assertRaisesRegex(Invalid, "state_unreadable", self.store.load)
@@ -159,6 +217,47 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(encoded.startswith('"\\034'))
         self.assertNotIn("os.execute", encoded)
         self.assertNotIn("\n", encoded)
+
+
+class SitesOwnershipTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.hosts = Path(self.tmp.name) / "hosts"
+        self.hosts.write_bytes(b"127.0.0.1 localhost\n")
+        self.calls = []
+        patcher = mock.patch.object(Sites, "allowed", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.blocker = Sites(self.tmp.name, hosts=self.hosts)
+        self.blocker.helper_run = self.run_helper
+
+    def run_helper(self, action):
+        self.calls.append(action)
+        sites.write(str(self.hosts), sites.DEFAULT_SITES if action == "block" else None)
+        self.blocker.stamp = None
+
+    def test_never_lifts_a_block_it_did_not_place(self):
+        self.hosts.write_bytes(sites.render(self.hosts.read_bytes(), ["x.com"]))
+        self.blocker.sync(False)
+        self.assertEqual(self.calls, [])
+
+    def test_blocks_once_restores_after_rewrite_and_releases(self):
+        self.blocker.sync(True)
+        self.blocker.sync(True)
+        self.blocker.sync(True)
+        self.assertEqual(self.calls, ["block"])
+        self.hosts.write_bytes(b"# rewritten by hblock\n127.0.0.1 localhost\n")
+        self.blocker.sync(True)
+        self.assertEqual(self.calls, ["block", "block"])
+        # A restarted service (e.g. after a crash) still owns and lifts it.
+        restarted = Sites(self.tmp.name, hosts=self.hosts)
+        restarted.helper_run = self.run_helper
+        restarted.release()
+        self.assertEqual(self.calls[-1], "unblock")
+        self.assertFalse(sites.blocked(self.hosts.read_bytes()))
+        restarted.release()
+        self.assertEqual(len(self.calls), 3)
 
 
 class ProtocolTests(unittest.TestCase):

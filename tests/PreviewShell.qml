@@ -26,12 +26,13 @@ ShellRoot {
         {date: "2026-11-03", seconds: 4500}]
     property var lastDetails: ({})
     property var config: ({mode: "deepwork", deepMinutes: 50, focusMinutes: 25, breakMinutes: 5,
-        longBreakMinutes: 15, longBreakEvery: 4, rounds: 4, guard: true, intention: ""})
+        longBreakMinutes: 15, longBreakEvery: 4, rounds: 4, guard: true, blockSites: false, intention: ""})
     property QtObject mock: QtObject {
         property bool available: true
         property string failure: ""
         property var state: ({state: "idle", active: false, remaining: 0, settings: harness.config,
-            todayMinutes: 75, todaySessions: 2, week: harness.week, wave: harness.wave, error: "", guardError: ""})
+            todayMinutes: 75, todaySessions: 2, week: harness.week, wave: harness.wave, error: "", guardError: "",
+            sitesReady: false, sitesSetup: false, sitesError: ""})
         function send(action, details) { harness.lastAction = action; harness.lastDetails = details || {} }
     }
     FloatingWindow {
@@ -77,11 +78,31 @@ ShellRoot {
                 view.mode = "pomodoro"
                 capture("pomodoro")
                 view.mode = "deepwork"
+                const sitesToggle = find(view, "sitesToggle")
+                const setup = find(view, "sitesSetup")
+                verify(sitesToggle.visible)
+                verify(!setup.visible)
+                mouseClick(sitesToggle)
+                verify(view.blockSites)
+                wait(20)
+                verify(setup.visible)
+                capture("sites-setup")
+                mouseClick(setup)
+                compare(harness.lastAction, "setupSites")
+                mock.state = Object.assign({}, mock.state, {sitesSetup: true})
+                wait(20)
+                verify(!setup.enabled)
+                mock.state = Object.assign({}, mock.state, {sitesSetup: false, sitesReady: true})
+                wait(20)
+                verify(!setup.visible)
                 const start = find(view, "startButton")
                 verify(start !== null)
                 mouseClick(start)
                 compare(harness.lastAction, "start")
                 compare(harness.lastDetails.options.deepMinutes, 50)
+                compare(harness.lastDetails.options.blockSites, true)
+                mouseClick(sitesToggle)
+                verify(!view.blockSites)
                 harness.lastAction = ""
                 view.forceActiveFocus()
                 keyClick(Qt.Key_Space)
@@ -91,6 +112,13 @@ ShellRoot {
                     workspace: {id: 3, name: "3"}, round: 1, rounds: 1, settings: harness.config,
                     todayMinutes: 75, todaySessions: 2, week: harness.week, wave: harness.wave, error: "", guardError: ""}
                 capture("focus")
+                const sitesStatus = find(view, "sitesStatus")
+                verify(!sitesStatus.visible)
+                mock.state = Object.assign({}, mock.state, {blockSites: true, sitesBlocked: true})
+                wait(20)
+                verify(sitesStatus.visible)
+                capture("focus-sites")
+                mock.state = Object.assign({}, mock.state, {blockSites: false, sitesBlocked: false})
                 const graph = find(view, "weekGraph")
                 compare(graph.days.length, 7)
                 const liveWeek = harness.week.map(day => Object.assign({}, day))

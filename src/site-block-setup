@@ -1,0 +1,34 @@
+#!/bin/bash
+# One-time, admin-approved setup for Lock-In's social media block.
+#
+# Installs a root-owned copy of sites.py as /usr/local/libexec/lockin-sites and
+# a sudoers rule that lets one user run exactly `lockin-sites block` and
+# `lockin-sites unblock` without a password. Run through pkexec (the panel's
+# "Allow blocking" button) or `sudo`. Remove both files to undo it.
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+
+(( EUID == 0 )) || { echo "Run with sudo or pkexec." >&2; exit 1; }
+
+user=""
+if [[ -n ${PKEXEC_UID:-} ]]; then
+  user=$(id -nu -- "$PKEXEC_UID")
+elif [[ -n ${SUDO_USER:-} ]]; then
+  user=$SUDO_USER
+fi
+[[ $user =~ ^[a-z_][a-z0-9_-]{0,31}$ && $user != root ]] || { echo "Cannot tell which user to allow." >&2; exit 1; }
+
+source_file="$(dirname -- "$(readlink -f -- "$0")")/sites.py"
+helper=/usr/local/libexec/lockin-sites
+rule=/etc/sudoers.d/lockin-sites
+
+staged=$(mktemp)
+trap 'rm -f "$staged"' EXIT
+printf '# Lock-In: let %s switch its focus-time social media block.\n%s ALL=(root) NOPASSWD: %s block, %s unblock\n' \
+  "$user" "$user" "$helper" "$helper" >"$staged"
+visudo -cqf "$staged"
+
+install -d -m 0755 -o root -g root /usr/local/libexec
+install -m 0755 -o root -g root -T "$source_file" "$helper"
+install -m 0440 -o root -g root -T "$staged" "$rule"
+echo "Lock-In can now block social media during focus for $user."
