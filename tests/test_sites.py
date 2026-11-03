@@ -8,19 +8,38 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import sites
-from sites import DEFAULT_SITES, Invalid, blocked, render, validate, write
+from sites import DEFAULT_SITES, Invalid, blocked, expand, normalize, render, section, validate, write
 
 HOSTS = (b"# Generated with hBlock\n127.0.0.1 localhost\n::1 localhost\n"
          b"# BEGIN BLOCKLIST\n0.0.0.0 ads.example\n# END BLOCKLIST\n")
 
 
 class SitesTests(unittest.TestCase):
-    def test_defaults_cover_the_usual_feeds(self):
-        validate(DEFAULT_SITES)
-        for domain in ("x.com", "twitter.com", "www.youtube.com", "www.reddit.com",
-                       "www.pinterest.com", "www.instagram.com", "www.tiktok.com", "www.facebook.com"):
-            self.assertIn(domain, DEFAULT_SITES)
-        self.assertNotIn("music.youtube.com", DEFAULT_SITES)
+    def test_defaults_cover_the_usual_feeds_and_their_aliases(self):
+        for site in ("x.com", "youtube.com", "reddit.com", "pinterest.com", "github.com"):
+            self.assertIn(site, DEFAULT_SITES)
+        hosts = validate(expand(DEFAULT_SITES))
+        for host in ("twitter.com", "mobile.twitter.com", "www.youtube.com", "youtu.be", "old.reddit.com",
+                     "pt.pinterest.com", "pin.it", "www.github.com", "gist.github.com", "m.facebook.com"):
+            self.assertIn(host, hosts)
+        for host in ("music.youtube.com", "api.github.com", "raw.githubusercontent.com"):
+            self.assertNotIn(host, hosts)
+        self.assertEqual(expand(["example.org"]), ["example.org", "www.example.org", "m.example.org"])
+        # The installed helper's limit holds for the longest list a user can pick.
+        many = [f"site{n}.example.com" for n in range(sites.MAX_CHOSEN - len(DEFAULT_SITES))]
+        validate(expand(list(DEFAULT_SITES) + many))
+
+    def test_pasted_urls_become_sites(self):
+        for raw, site in (("https://www.GitHub.com/valvesky?tab=repos", "github.com"), (" YouTube.com ", "youtube.com"),
+                          ("news.ycombinator.com:443/item", "news.ycombinator.com"), ("user@lobste.rs", "lobste.rs"),
+                          ("münchen.de", "xn--mnchen-3ya.de")):
+            self.assertEqual(normalize(raw), site)
+        for bad in ("", "localhost", "not a site", "1.2.3.4", None, "x" * 3000, "-x.com"):
+            self.assertIsNone(normalize(bad))
+
+    def test_section_reads_back_what_was_written(self):
+        self.assertIsNone(section(HOSTS))
+        self.assertEqual(section(render(HOSTS, ["x.com", "www.x.com"])), {"x.com", "www.x.com"})
 
     def test_block_appends_both_families_and_unblock_restores_every_byte(self):
         on = render(HOSTS, ["x.com", "www.reddit.com"])

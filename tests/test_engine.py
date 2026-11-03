@@ -127,7 +127,22 @@ class EngineTests(unittest.TestCase):
             options({"blockSites": "yes"})
         legacy = self.engine.document()
         del legacy["settings"]["blockSites"]
-        self.assertFalse(Engine(legacy).settings["blockSites"])
+        del legacy["settings"]["sites"]
+        restored = Engine(legacy)
+        self.assertFalse(restored.settings["blockSites"])
+        self.assertIn("github.com", restored.settings["sites"])
+
+    def test_saved_sites_apply_to_sessions_that_do_not_name_any(self):
+        self.engine.edit_sites("add", "lobste.rs")
+        self.engine.edit_sites("remove", "x.com")
+        config = self.engine.configure({"guard": False, "blockSites": True})
+        self.assertEqual(config["sites"][-1], "lobste.rs")
+        self.engine.start(config)
+        self.assertEqual(self.engine.snapshot()["sites"], config["sites"])
+        self.assertEqual(self.engine.document()["settings"]["sites"], config["sites"])
+        for bad in (["X.com"], "x.com", [f"s{n}.example.com" for n in range(101)]):
+            with self.assertRaises(Invalid):
+                options({"sites": bad})
 
     def test_week_tracks_live_focus_and_freezes_on_break(self):
         self.start(mode="pomodoro")

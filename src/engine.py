@@ -8,10 +8,13 @@ import math
 import time
 import uuid
 
+import sites
+
 DEFAULTS = {
     "mode": "deepwork", "deepMinutes": 50, "focusMinutes": 25,
     "breakMinutes": 5, "longBreakMinutes": 15, "longBreakEvery": 4,
     "rounds": 4, "guard": True, "blockSites": False, "intention": "",
+    "sites": list(sites.DEFAULT_SITES),
 }
 
 
@@ -36,6 +39,12 @@ def options(raw):
     if not isinstance(result["intention"], str) or len(result["intention"]) > 140:
         raise Invalid("invalid_intention")
     result["intention"] = " ".join(result["intention"].split())
+    chosen = result["sites"]
+    if not isinstance(chosen, list) or not all(isinstance(s, str) and sites.normalize(s) == s for s in chosen):
+        raise Invalid("invalid_site")
+    if len(chosen) > sites.MAX_CHOSEN:
+        raise Invalid("too_many_sites")
+    result["sites"] = list(dict.fromkeys(chosen))
     return result
 
 
@@ -130,6 +139,31 @@ class Engine:
     def document(self):
         return copy.deepcopy({"version": 1, "settings": self.settings,
                               "session": self.session, "history": self.history[-200:]})
+
+    def configure(self, raw):
+        """Session options; the saved site list applies unless the request names one."""
+        if isinstance(raw, dict) and "sites" not in raw:
+            raw = {**raw, "sites": self.settings["sites"]}
+        return options(raw)
+
+    def edit_sites(self, action, site=None):
+        if self.snapshot()["active"]:
+            raise Invalid("already_active")
+        chosen = list(self.settings["sites"])
+        if action == "add":
+            name = sites.normalize(site)
+            if name is None:
+                raise Invalid("invalid_site")
+            if name in chosen:
+                raise Invalid("site_exists")
+            chosen.append(name)
+        elif action == "remove":
+            if site not in chosen:
+                raise Invalid("invalid_site")
+            chosen.remove(site)
+        else:
+            chosen = list(sites.DEFAULT_SITES)
+        self.settings = options({**self.settings, "sites": chosen})
 
     def start(self, raw, workspace=None):
         if self.snapshot()["active"]:
@@ -235,7 +269,7 @@ class Engine:
         week = self.week(now)
         state = {"state": "idle", "active": False, "remaining": 0, "progress": 0,
                  "round": 0, "rounds": 0, "phase": "", "intention": "", "workspace": None,
-                 "guard": False, "blockSites": False, "settings": copy.deepcopy(self.settings),
+                 "guard": False, "blockSites": False, "sites": [], "settings": copy.deepcopy(self.settings),
                  "week": week,
                  "wave": self.wave(now),
                  "todayMinutes": int(week[-1]["seconds"] // 60),
@@ -246,7 +280,7 @@ class Engine:
         config = session["config"]
         state.update({"intention": config["intention"], "mode": config["mode"],
                       "rounds": config["rounds"] if config["mode"] == "pomodoro" else 1,
-                      "workspace": session["workspace"]})
+                      "workspace": session["workspace"], "sites": list(config["sites"])})
         if session["outcome"]:
             state.update({"state": session["outcome"], "progress": 1 if session["outcome"] == "complete" else 0})
             return state

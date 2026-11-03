@@ -138,16 +138,16 @@ class ServiceTests(unittest.TestCase):
         self.service.command({"action": "start", "options": {"mode": "pomodoro", "guard": False, "blockSites": True}})
         state = self.service.tick()
         self.assertTrue(state["sitesBlocked"])
-        self.assertEqual(self.sites.wanted[-1], True)
+        self.assertIn("github.com", self.sites.wanted[-1])
         now[0] += 1500
         self.assertFalse(self.service.tick()["sitesBlocked"])
-        self.assertEqual(self.sites.wanted[-1], False)
+        self.assertFalse(self.sites.wanted[-1])
         now[0] += 300
         self.service.tick()
-        self.assertEqual(self.sites.wanted[-1], True)
+        self.assertIn("github.com", self.sites.wanted[-1])
         self.service.command({"action": "unlock", "confirmation": "UNLOCK"})
         self.service.tick()
-        self.assertEqual(self.sites.wanted[-1], False)
+        self.assertFalse(self.sites.wanted[-1])
 
     def test_blocking_needs_setup_before_start_and_failures_show(self):
         self.sites.ready = False
@@ -161,6 +161,28 @@ class ServiceTests(unittest.TestCase):
         self.sites.fail = True
         state = self.service.tick()
         self.assertEqual((state["active"], state["sitesError"], state["sitesBlocked"]), (True, "sites_unavailable", False))
+
+    def test_site_list_is_edited_saved_and_locked_during_focus(self):
+        self.service.command({"action": "addSite", "site": "https://news.ycombinator.com/news"})
+        self.assertEqual(self.service.error, "")
+        self.service.command({"action": "removeSite", "site": "linkedin.com"})
+        saved = self.store.load().settings["sites"]
+        self.assertEqual(saved[-1], "news.ycombinator.com")
+        self.assertNotIn("linkedin.com", saved)
+        self.service.command({"action": "addSite", "site": "www.github.com"})
+        self.assertEqual(self.service.error, "site_exists")
+        self.service.command({"action": "addSite", "site": "not a site"})
+        self.assertEqual(self.service.error, "invalid_site")
+        self.service.command({"action": "start", "options": {"guard": False, "blockSites": True}})
+        state = self.service.tick()
+        self.assertEqual(state["sites"], saved)
+        self.assertIn("news.ycombinator.com", self.sites.wanted[-1])
+        self.assertNotIn("linkedin.com", self.sites.wanted[-1])
+        self.service.command({"action": "removeSite", "site": "x.com"})
+        self.assertEqual(self.service.error, "already_active")
+        self.service.command({"action": "unlock", "confirmation": "UNLOCK"})
+        self.service.command({"action": "resetSites"})
+        self.assertEqual(self.store.load().settings["sites"], list(sites.DEFAULT_SITES))
 
     def test_bad_state_is_never_overwritten(self):
         self.store.path.write_text("{broken", encoding="utf-8")
@@ -232,9 +254,9 @@ class SitesOwnershipTests(unittest.TestCase):
         self.blocker = Sites(self.tmp.name, hosts=self.hosts)
         self.blocker.helper_run = self.run_helper
 
-    def run_helper(self, action):
+    def run_helper(self, action, hosts=()):
         self.calls.append(action)
-        sites.write(str(self.hosts), sites.DEFAULT_SITES if action == "block" else None)
+        sites.write(str(self.hosts), list(hosts) if action == "block" else None)
         self.blocker.stamp = None
 
     def test_never_lifts_a_block_it_did_not_place(self):
@@ -243,13 +265,18 @@ class SitesOwnershipTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_blocks_once_restores_after_rewrite_and_releases(self):
-        self.blocker.sync(True)
-        self.blocker.sync(True)
-        self.blocker.sync(True)
+        want = sites.expand(["x.com", "github.com"])
+        self.blocker.sync(want)
+        self.blocker.sync(want)
+        self.blocker.sync(want)
         self.assertEqual(self.calls, ["block"])
         self.hosts.write_bytes(b"# rewritten by hblock\n127.0.0.1 localhost\n")
-        self.blocker.sync(True)
+        self.blocker.sync(want)
         self.assertEqual(self.calls, ["block", "block"])
+        # A different list replaces the section rather than keeping the old one.
+        self.blocker.sync(sites.expand(["x.com"]))
+        self.assertEqual(sites.section(self.hosts.read_bytes()), set(sites.expand(["x.com"])))
+        self.assertEqual(len(self.calls), 3)
         # A restarted service (e.g. after a crash) still owns and lifts it.
         restarted = Sites(self.tmp.name, hosts=self.hosts)
         restarted.helper_run = self.run_helper
@@ -257,7 +284,7 @@ class SitesOwnershipTests(unittest.TestCase):
         self.assertEqual(self.calls[-1], "unblock")
         self.assertFalse(sites.blocked(self.hosts.read_bytes()))
         restarted.release()
-        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(len(self.calls), 4)
 
 
 class ProtocolTests(unittest.TestCase):

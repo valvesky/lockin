@@ -19,32 +19,39 @@ HELPER = "/usr/local/libexec/lockin-sites"
 BEGIN = b"# BEGIN LOCK-IN"
 END = b"# END LOCK-IN"
 
-# A hosts file matches exact names, so list the subdomains people actually land
-# on. music.youtube.com stays reachable on purpose: background music is not a feed.
+# The sites people pick. Each one also covers the usual www. and m. hosts plus
+# the aliases and subdomains below, because a hosts file matches exact names.
+# music.youtube.com stays reachable on purpose: background music is not a feed.
 DEFAULT_SITES = (
-    "x.com", "www.x.com", "mobile.x.com",
-    "twitter.com", "www.twitter.com", "mobile.twitter.com",
-    "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
-    "reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com", "m.reddit.com", "redd.it",
-    "pinterest.com", "www.pinterest.com", "pin.it",
-    "pt.pinterest.com", "br.pinterest.com", "uk.pinterest.com", "de.pinterest.com",
-    "fr.pinterest.com", "es.pinterest.com", "it.pinterest.com", "nl.pinterest.com",
-    "pinterest.co.uk", "www.pinterest.co.uk", "pinterest.pt", "www.pinterest.pt",
-    "facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com", "fb.com", "www.fb.com",
-    "instagram.com", "www.instagram.com",
-    "tiktok.com", "www.tiktok.com", "m.tiktok.com", "vm.tiktok.com",
-    "threads.com", "www.threads.com", "threads.net", "www.threads.net",
-    "bsky.app",
-    "linkedin.com", "www.linkedin.com",
-    "snapchat.com", "www.snapchat.com", "web.snapchat.com",
-    "tumblr.com", "www.tumblr.com",
-    "twitch.tv", "www.twitch.tv", "m.twitch.tv",
-    "9gag.com",
-    "mastodon.social",
+    "x.com", "youtube.com", "reddit.com", "pinterest.com", "instagram.com",
+    "tiktok.com", "facebook.com", "threads.com", "bsky.app", "linkedin.com",
+    "snapchat.com", "tumblr.com", "twitch.tv", "9gag.com", "mastodon.social",
+    "github.com",
 )
+COMMON = ("", "www.", "m.")
+ALIASES = {
+    "x.com": ("twitter.com",),
+    "youtube.com": ("youtu.be",),
+    "reddit.com": ("redd.it",),
+    "pinterest.com": ("pin.it", "pinterest.co.uk", "pinterest.pt"),
+    "facebook.com": ("fb.com",),
+    "threads.com": ("threads.net",),
+}
+SUBDOMAINS = {
+    "x.com": ("mobile.",),
+    "twitter.com": ("mobile.",),
+    "reddit.com": ("old.", "new."),
+    "pinterest.com": tuple(f"{c}." for c in ("pt", "br", "uk", "de", "fr", "es", "it", "nl")),
+    "facebook.com": ("web.",),
+    "tiktok.com": ("vm.",),
+    "snapchat.com": ("web.",),
+    "github.com": ("gist.",),
+}
 
 DOMAIN = re.compile(r"(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
 MAX_SITES = 512
+MAX_CHOSEN = 100
+SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://")
 
 
 class Invalid(ValueError):
@@ -57,6 +64,29 @@ def validate(domains):
             isinstance(d, str) and DOMAIN.fullmatch(d) for d in domains):
         raise Invalid("invalid_sites")
     return domains
+
+
+def normalize(text):
+    """A pasted URL or hostname as a bare site ("https://www.GitHub.com/x" -> "github.com"), or None."""
+    if not isinstance(text, str) or len(text) > 2048:
+        return None
+    site = SCHEME.sub("", text.strip().lower())
+    site = re.split(r"[/?#]", site, maxsplit=1)[0].rsplit("@", 1)[-1].split(":", 1)[0].rstrip(".")
+    site = site.removeprefix("www.")
+    try:
+        site = site.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    return site if DOMAIN.fullmatch(site) else None
+
+
+def expand(chosen):
+    """Every hostname the hosts file needs for the chosen sites."""
+    hosts = []
+    for site in chosen:
+        for name in (site, *ALIASES.get(site, ())):
+            hosts += [prefix + name for prefix in COMMON + SUBDOMAINS.get(name, ())]
+    return list(dict.fromkeys(hosts))
 
 
 def opens(line):
@@ -97,6 +127,21 @@ OPENED = re.compile(rb"^" + re.escape(BEGIN) + rb"(?:[ \r]|$)", re.MULTILINE)
 
 def blocked(data):
     return OPENED.search(data) is not None
+
+
+def section(data):
+    """The hostnames in Lock-In's section, or None when there is none."""
+    found = OPENED.search(data)
+    if found is None:
+        return None
+    names = set()
+    for line in data[found.end():].splitlines():
+        if line.rstrip(b"\r") == END:
+            break
+        parts = line.split()
+        if len(parts) == 2:
+            names.add(parts[1].decode("ascii", "replace"))
+    return names
 
 
 def write(path, domains):

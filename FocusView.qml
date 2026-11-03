@@ -19,6 +19,13 @@ FocusScope {
     property bool blockSites: false
     property bool unlocking: false
     property bool help: false
+    property bool sitesOpen: false
+    property bool addingSite: false
+    property bool savingSite: false
+    readonly property var savedSites: (session.settings && session.settings.sites) || []
+    readonly property string savedSitesKey: JSON.stringify(savedSites)
+    readonly property string sessionError: session.error || ""
+    readonly property bool siteError: ["invalid_site", "site_exists", "too_many_sites"].indexOf(sessionError) !== -1
     property bool initialized: false
     signal closeRequested()
     implicitHeight: content.implicitHeight
@@ -60,8 +67,19 @@ FocusScope {
             + Commons.I18n.formatNumber(seconds % 60)
     }
     function errorText(code) { return strings.t("error." + code, strings.t("error.generic")) }
+    // A saved list means the add went through; an error keeps the field open.
+    onSavedSitesKeyChanged: if (savingSite) { savingSite = false; addingSite = false; siteField.text = "" }
+    onSessionErrorChanged: if (savingSite && sessionError) savingSite = false
+    function addSite() {
+        if (!available || !siteField.text.trim()) return
+        savingSite = true
+        service.send("addSite", {site: siteField.text})
+    }
+    function cancelSite() { addingSite = false; savingSite = false; siteField.text = ""; root.forceActiveFocus() }
+
     Keys.onEscapePressed: {
         if (unlocking) { unlocking = false; root.forceActiveFocus() }
+        else if (addingSite) cancelSite()
         else if (help) help = false
         else root.closeRequested()
     }
@@ -286,6 +304,132 @@ FocusScope {
             }
         }
 
+        // A disclosure, like <details>: the chosen sites as removable chips.
+        Column {
+            visible: !root.active && root.blockSites
+            width: parent.width
+            spacing: Style.space(8)
+            Button {
+                objectName: "sitesDisclosure"
+                width: parent.width
+                leftAlign: true
+                horizontalPadding: Style.space(2)
+                text: (root.sitesOpen ? "  " : "  ") + strings.t("sites.customize").arg(Commons.I18n.formatNumber(root.savedSites.length))
+                focusable: true
+                foreground: root.muted
+                onClicked: root.sitesOpen = !root.sitesOpen
+            }
+            Flow {
+                objectName: "siteChips"
+                visible: root.sitesOpen
+                width: parent.width
+                spacing: Style.space(6)
+                Repeater {
+                    model: root.savedSites
+                    delegate: BorderSurface {
+                        id: chip
+                        required property string modelData
+                        implicitWidth: chipLabel.implicitWidth + removeSite.implicitWidth + Style.space(12)
+                        implicitHeight: Math.max(Style.space(30), removeSite.implicitHeight)
+                        radius: Style.cornerRadius
+                        color: "transparent"
+                        borderSpec: Border.controlSpec("normal", root.ink, Commons.Color.accent)
+                        PlainLabel {
+                            id: chipLabel
+                            anchors.left: parent.left
+                            anchors.leftMargin: Style.space(7)
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: chip.modelData
+                            font.pixelSize: Style.font.bodySmall
+                        }
+                        Button {
+                            id: removeSite
+                            objectName: "removeSite:" + chip.modelData
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "×"
+                            tooltipText: strings.t("sites.remove")
+                            focusable: true
+                            horizontalPadding: Style.space(5)
+                            foreground: root.muted
+                            enabled: root.available
+                            onClicked: root.service.send("removeSite", {site: chip.modelData})
+                        }
+                    }
+                }
+                Button {
+                    objectName: "addSite"
+                    text: "+"
+                    bordered: true
+                    focusable: true
+                    tooltipText: strings.t("sites.add")
+                    foreground: root.ink
+                    enabled: root.available
+                    onClicked: { root.addingSite = true; Qt.callLater(function() { siteField.forceActiveFocus() }) }
+                }
+            }
+            Row {
+                visible: root.sitesOpen && root.addingSite
+                width: parent.width
+                spacing: Style.space(6)
+                TextField {
+                    id: siteField
+                    objectName: "siteField"
+                    width: parent.width - saveSite.implicitWidth - cancelSite.implicitWidth - parent.spacing * 2
+                    placeholderText: strings.t("sites.placeholder")
+                    maximumLength: 253
+                    foreground: root.ink
+                    enabled: !root.savingSite
+                    onAccepted: root.addSite()
+                }
+                Button {
+                    id: saveSite
+                    text: strings.t("sites.save")
+                    bordered: true
+                    focusable: true
+                    foreground: root.ink
+                    enabled: !root.savingSite && root.available
+                    onClicked: root.addSite()
+                }
+                Button {
+                    id: cancelSite
+                    text: "×"
+                    focusable: true
+                    foreground: root.muted
+                    onClicked: root.cancelSite()
+                }
+            }
+            PlainLabel {
+                width: parent.width
+                visible: root.sitesOpen && root.siteError
+                text: root.siteError ? root.errorText(root.sessionError) : ""
+                color: Commons.Color.urgent
+                wrapMode: Text.WordWrap
+                font.pixelSize: Style.font.bodySmall
+            }
+            Row {
+                visible: root.sitesOpen
+                width: parent.width
+                PlainLabel {
+                    width: parent.width - restoreSites.implicitWidth
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: strings.t("sites.hint")
+                    color: root.muted
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Style.font.caption
+                }
+                Button {
+                    id: restoreSites
+                    objectName: "restoreSites"
+                    text: strings.t("sites.restore")
+                    focusable: true
+                    foreground: root.muted
+                    enabled: root.available
+                    onClicked: root.service.send("resetSites")
+                }
+            }
+        }
+
         PlainLabel {
             width: parent.width
             visible: root.active
@@ -302,7 +446,8 @@ FocusScope {
             objectName: "sitesStatus"
             width: parent.width
             visible: (root.active && !!root.session.blockSites) || !!root.session.sitesError
-            text: root.session.sitesError ? root.errorText(root.session.sitesError) : strings.t("sites.active")
+            text: root.session.sitesError ? root.errorText(root.session.sitesError)
+                : strings.tn("sites.active", (root.session.sites || []).length).arg(Commons.I18n.formatNumber((root.session.sites || []).length))
             color: root.session.sitesError ? Commons.Color.urgent : root.muted
             wrapMode: Text.WordWrap
             font.pixelSize: Style.font.bodySmall
@@ -311,7 +456,7 @@ FocusScope {
 
         PlainLabel {
             width: parent.width
-            visible: !root.available || !!root.session.error || (!!root.service && !!root.service.failure)
+            visible: !root.available || (!!root.session.error && !root.siteError) || (!!root.service && !!root.service.failure)
             text: !root.available || (!!root.service && !!root.service.failure) ? root.errorText(root.service && root.service.failure ? root.service.failure : "connecting")
                 : root.errorText(root.session.error)
             color: Commons.Color.urgent

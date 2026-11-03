@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 
-from engine import Engine, Invalid, options
+from engine import Engine, Invalid
 import sites
 
 
@@ -185,13 +185,12 @@ class Sites:
         if not self.ready:
             raise Invalid("sites_setup_failed")
 
-    def helper_run(self, action):
+    def helper_run(self, action, hosts=()):
         if time.monotonic() < self.retry_at:
             raise Invalid("sites_unavailable")
-        payload = "".join(f"{domain}\n" for domain in sites.DEFAULT_SITES) if action == "block" else ""
         try:
-            subprocess.run(["sudo", "-n", self.helper, action], input=payload, capture_output=True,
-                           text=True, timeout=10, check=True)
+            subprocess.run(["sudo", "-n", self.helper, action], input="".join(f"{host}\n" for host in hosts),
+                           capture_output=True, text=True, timeout=10, check=True)
         except (OSError, subprocess.SubprocessError) as exc:
             # Back off: sudo logs every refused attempt.
             self.retry_at = time.monotonic() + 30
@@ -200,6 +199,7 @@ class Sites:
         self.stamp = None
 
     def sync(self, want):
+        """Make the block hold exactly the hostnames in want; nothing when want is empty."""
         owned = self.marker.exists()
         if not want:
             if owned:
@@ -208,18 +208,18 @@ class Sites:
             return
         try:
             stat = self.hosts.stat()
-            stamp = (stat.st_mtime_ns, stat.st_ino, stat.st_size)
-            # Recheck only when the file changes, e.g. a blocklist tool rewrote it.
+            stamp = (stat.st_mtime_ns, stat.st_ino, stat.st_size, tuple(want))
+            # Recheck only when the file or the list changes, e.g. a blocklist
+            # tool rewrote /etc/hosts.
             if owned and stamp == self.stamp:
                 return
-            present = sites.blocked(self.hosts.read_bytes())
+            current = sites.section(self.hosts.read_bytes())
         except OSError as exc:
             raise Invalid("sites_unavailable") from exc
-        if not present:
-            self.marker.touch(mode=0o600)
-            self.helper_run("block")
+        self.marker.touch(mode=0o600)
+        if current != set(want):
+            self.helper_run("block", want)
         else:
-            self.marker.touch(mode=0o600)
             self.stamp = stamp
 
     def release(self):
@@ -251,7 +251,7 @@ class Service:
                     self.engine.settle()
                     if self.engine.snapshot()["active"]:
                         raise Invalid("already_active")
-                    config = options(request.get("options", {}))
+                    config = self.engine.configure(request.get("options", {}))
                     if config["blockSites"] and not self.sites.ready:
                         self.sites.ready = self.sites.allowed()
                         if not self.sites.ready:
@@ -266,6 +266,8 @@ class Service:
                     self.engine.unlock(request.get("confirmation"))
                 elif action == "reset":
                     self.engine.reset()
+                elif action in ("addSite", "removeSite", "resetSites"):
+                    self.engine.edit_sites(action[:-4].lower(), request.get("site"))
                 elif action == "setupSites":
                     self.sites.begin_setup()
                     return
@@ -305,7 +307,7 @@ class Service:
             self.error = str(exc)
         self.sites_error = ""
         try:
-            self.sites.sync(state["blockSites"])
+            self.sites.sync(state["blockSites"] and sites.expand(state["sites"]))
         except Invalid as exc:
             self.sites_error = str(exc)
         return {**state, "error": self.error, "guardError": self.guard_error,
