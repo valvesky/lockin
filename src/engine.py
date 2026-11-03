@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import math
 import time
 import uuid
@@ -79,6 +80,25 @@ class Engine:
                 raise Invalid("invalid_state")
             if type(ended) not in (int, float) or not math.isfinite(ended) or not 0 < ended < 253402300799:
                 raise Invalid("invalid_state")
+            spans = entry.get("focusSpans", [])
+            if not isinstance(spans, list) or len(spans) > 12:
+                raise Invalid("invalid_state")
+            for span in spans:
+                if (not isinstance(span, list) or len(span) != 2
+                        or any(type(t) not in (int, float) or not math.isfinite(t) for t in span)
+                        or not 0 < span[0] <= span[1] <= ended
+                        or span[1] - span[0] > 480 * 60):
+                    raise Invalid("invalid_state")
+            days = entry.get("focusByDay", {})
+            if not isinstance(days, dict) or len(days) > 20:
+                raise Invalid("invalid_state")
+            for day, seconds in days.items():
+                try:
+                    datetime.date.fromisoformat(day)
+                except (TypeError, ValueError):
+                    raise Invalid("invalid_state") from None
+                if type(seconds) not in (int, float) or not math.isfinite(seconds) or not 0 <= seconds <= 86400:
+                    raise Invalid("invalid_state")
         self.history = copy.deepcopy(history)
         session = doc.get("session")
         if session is None:
@@ -135,8 +155,64 @@ class Engine:
         focused = sum(max(0, min(ended, p["end"]) - p["start"])
                       for p in session["phases"] if p["kind"] == "focus")
         self.history.append({"id": session["id"], "endedAt": ended,
-                             "focusedSeconds": int(focused), "outcome": outcome})
+                             "focusedSeconds": int(focused), "outcome": outcome,
+                             "focusSpans": self.focus_spans(session, ended),
+                             "focusByDay": self.focus_by_day(session, ended)})
         self.history = self.history[-200:]
+
+    @staticmethod
+    def focus_spans(session, until):
+        return [[p["start"], min(until, p["end"])] for p in session["phases"]
+                if p["kind"] == "focus" and until > p["start"]]
+
+    def wave(self, now):
+        today = datetime.date.fromtimestamp(now)
+        start = time.mktime((today - datetime.timedelta(days=6)).timetuple())
+        spans = []
+        for entry in self.history:
+            # Legacy totals are spread evenly over a focus block ending at endedAt.
+            spans.extend(entry.get("focusSpans", [
+                [entry["endedAt"] - entry["focusedSeconds"], entry["endedAt"]]]))
+        if self.session and not self.session["outcome"]:
+            spans.extend(self.focus_spans(self.session, now))
+        spans = [(a, b) for a, b in spans if b > start - 21600 and a <= now]
+        times = [start + hour * 3600 for hour in range(int((now - start) // 3600) + 1)]
+        if times[-1] < now:
+            times.append(now)
+        return [{"time": t, "hours": sum(max(0, min(t, b) - max(t - 21600, a))
+                                         for a, b in spans) / 3600} for t in times]
+
+    @staticmethod
+    def focus_by_day(session, until):
+        days = {}
+        for phase in session["phases"]:
+            if phase["kind"] != "focus":
+                continue
+            cursor, end = phase["start"], min(until, phase["end"])
+            while cursor < end:
+                day = datetime.date.fromtimestamp(cursor)
+                midnight = time.mktime((day + datetime.timedelta(days=1)).timetuple())
+                stop = min(end, midnight)
+                key = day.isoformat()
+                days[key] = days.get(key, 0) + stop - cursor
+                cursor = stop
+        return days
+
+    def week(self, now):
+        today = datetime.date.fromtimestamp(now)
+        totals = {(today - datetime.timedelta(days=ago)).isoformat(): 0 for ago in range(6, -1, -1)}
+        for entry in self.history:
+            # Older records only stored an end date and a total.
+            days = entry.get("focusByDay", {
+                datetime.date.fromtimestamp(entry["endedAt"]).isoformat(): entry["focusedSeconds"]})
+            for day, seconds in days.items():
+                if day in totals:
+                    totals[day] += seconds
+        if self.session and not self.session["outcome"]:
+            for day, seconds in self.focus_by_day(self.session, now).items():
+                if day in totals:
+                    totals[day] += seconds
+        return [{"date": day, "seconds": seconds} for day, seconds in totals.items()]
 
     def unlock(self, confirmation):
         if confirmation != "UNLOCK":
@@ -156,10 +232,13 @@ class Engine:
         today = time.strftime("%Y-%m-%d", time.localtime(now))
         daily = [e for e in self.history
                  if time.strftime("%Y-%m-%d", time.localtime(e["endedAt"])) == today]
+        week = self.week(now)
         state = {"state": "idle", "active": False, "remaining": 0, "progress": 0,
                  "round": 0, "rounds": 0, "phase": "", "intention": "", "workspace": None,
                  "guard": False, "settings": copy.deepcopy(self.settings),
-                 "todayMinutes": sum(e["focusedSeconds"] for e in daily) // 60,
+                 "week": week,
+                 "wave": self.wave(now),
+                 "todayMinutes": int(week[-1]["seconds"] // 60),
                  "todaySessions": sum(e["outcome"] == "complete" for e in daily)}
         session = self.session
         if session is None:

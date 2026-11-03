@@ -1,6 +1,8 @@
 import copy
+import datetime
 from pathlib import Path
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -111,6 +113,49 @@ class EngineTests(unittest.TestCase):
             self.start(deepMinutes=1)
             self.advance(60)
         self.assertEqual(len(self.engine.document()["history"]), 200)
+
+    def test_week_tracks_live_focus_and_freezes_on_break(self):
+        self.start(mode="pomodoro")
+        self.assertEqual(len(self.engine.snapshot()["week"]), 7)
+        self.assertEqual(self.advance(600)["week"][-1]["seconds"], 600)
+        self.assertEqual(self.advance(16 * 60)["week"][-1]["seconds"], 1500)
+        self.assertEqual(self.advance(60)["week"][-1]["seconds"], 1500)
+        self.engine.unlock("UNLOCK")
+        self.assertEqual(self.engine.snapshot()["week"][-1]["seconds"], 1500)
+        restored = Engine(self.engine.document(), clock=lambda: self.now)
+        self.assertEqual(restored.snapshot()["week"], self.engine.snapshot()["week"])
+
+    def test_week_splits_midnight_and_does_not_double_count_completion(self):
+        self.now = time.mktime(datetime.datetime(2026, 11, 2, 23, 30).timetuple())
+        self.start(deepMinutes=60)
+        state = self.advance(3600)
+        self.assertEqual([d["seconds"] for d in state["week"]][-2:], [1800, 1800])
+        self.engine.reset()
+        self.assertEqual(self.engine.snapshot()["week"], state["week"])
+        self.advance(7 * 86400)
+        self.assertEqual(sum(d["seconds"] for d in self.engine.snapshot()["week"]), 0)
+
+    def test_week_reads_legacy_history(self):
+        self.engine.history = [{"endedAt": self.now, "focusedSeconds": 3600, "outcome": "complete"}]
+        self.assertEqual(self.engine.snapshot()["week"][-1]["seconds"], 3600)
+
+    def test_wave_rises_during_focus_and_falls_afterwards(self):
+        self.start(deepMinutes=60)
+        self.assertEqual(self.engine.snapshot()["wave"][-1]["hours"], 0)
+        self.assertAlmostEqual(self.advance(1800)["wave"][-1]["hours"], 0.5)
+        self.assertAlmostEqual(self.advance(1800)["wave"][-1]["hours"], 1)
+        self.assertAlmostEqual(self.advance(1800)["wave"][-1]["hours"], 1)
+        restored = Engine(self.engine.document(), clock=lambda: self.now)
+        self.assertEqual(restored.snapshot()["wave"], self.engine.snapshot()["wave"])
+        self.assertAlmostEqual(self.advance(5 * 3600)["wave"][-1]["hours"], 0.5)
+        self.assertEqual(self.advance(1800)["wave"][-1]["hours"], 0)
+
+    def test_wave_excludes_breaks_and_reads_legacy_totals(self):
+        self.start(mode="pomodoro", focusMinutes=25, breakMinutes=5)
+        self.assertAlmostEqual(self.advance(30 * 60)["wave"][-1]["hours"], 25 / 60)
+        self.engine = Engine(clock=lambda: self.now)
+        self.engine.history = [{"endedAt": self.now, "focusedSeconds": 1800, "outcome": "complete"}]
+        self.assertAlmostEqual(self.engine.snapshot()["wave"][-1]["hours"], 0.5)
 
 
 if __name__ == "__main__":

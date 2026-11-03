@@ -9,7 +9,6 @@ FocusScope {
     readonly property var session: service ? service.state : ({})
     readonly property bool available: !!service && service.available
     readonly property bool active: !!session.active
-    readonly property bool finished: session.state === "complete" || session.state === "cancelled"
     property string mode: "deepwork"
     property int deepMinutes: 50
     property int focusMinutes: 25
@@ -66,7 +65,7 @@ FocusScope {
     }
     Keys.onPressed: function(event) {
         if (event.text === "?") { help = !help; event.accepted = true }
-        else if (event.key === Qt.Key_Space && !active && !finished) { start(); event.accepted = true }
+        else if (event.key === Qt.Key_Space && !active) { start(); event.accepted = true }
     }
 
     Column {
@@ -80,9 +79,8 @@ FocusScope {
             Mark { width: Style.space(30); height: width; anchors.verticalCenter: parent.verticalCenter }
             Column {
                 width: parent.width - Style.space(70)
-                spacing: Style.space(3)
+                anchors.verticalCenter: parent.verticalCenter
                 PlainLabel { text: "LOCK-IN"; font.pixelSize: Style.font.subtitle; font.bold: true; font.letterSpacing: 3 }
-                PlainLabel { text: strings.t("tagline"); color: root.muted; font.pixelSize: Style.font.caption }
             }
             Button {
                 text: "?"
@@ -93,10 +91,17 @@ FocusScope {
             }
         }
 
+        WeekGraph {
+            objectName: "weekGraph"
+            width: parent.width
+            days: root.session.week || []
+            samples: root.session.wave || []
+        }
+
         Rectangle { width: parent.width; height: 1; color: Qt.alpha(root.ink, 0.12) }
 
         Row {
-            visible: !root.active && !root.finished
+            visible: !root.active
             width: parent.width
             spacing: Style.space(6)
             Repeater {
@@ -114,31 +119,19 @@ FocusScope {
             }
         }
 
-        Column {
+        PlainLabel {
             width: parent.width
-            spacing: Style.space(5)
-            PlainLabel {
-                width: parent.width
-                text: root.active ? (root.session.intention || strings.t("active.intention"))
-                    : root.finished ? strings.t("state." + root.session.state) : strings.t("setup.title")
-                font.pixelSize: Style.font.title
-                font.bold: true
-                wrapMode: Text.WordWrap
-            }
-            PlainLabel {
-                width: parent.width
-                text: root.active ? strings.t(root.session.state === "break" ? "active.breakHint" : "active.focusHint")
-                    : root.finished ? strings.t("finished.hint") : strings.t("setup." + root.mode)
-                color: root.muted
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-            }
+            text: root.active ? (root.session.intention || strings.t("active.intention"))
+                : strings.t("setup.title")
+            font.pixelSize: Style.font.title
+            font.bold: true
+            wrapMode: Text.WordWrap
         }
 
         TextField {
             id: intention
             objectName: "intention"
-            visible: !root.active && !root.finished
+            visible: !root.active
             width: parent.width
             placeholderText: strings.t("setup.intention")
             maximumLength: 140
@@ -172,18 +165,10 @@ FocusScope {
                 color: Qt.alpha(root.ink, 0.12)
                 Rectangle { width: parent.width * (root.session.progress || 0); height: parent.height; color: root.accent }
             }
-            PlainLabel {
-                width: parent.width
-                text: strings.t("phase." + (root.session.phase || "focus"))
-                color: root.accent
-                font.pixelSize: Style.font.caption
-                font.letterSpacing: 2
-                horizontalAlignment: Text.AlignHCenter
-            }
         }
 
         Column {
-            visible: !root.active && !root.finished
+            visible: !root.active
             width: parent.width
             spacing: Style.space(14)
 
@@ -256,9 +241,8 @@ FocusScope {
 
         Toggle {
             width: parent.width
-            visible: !root.active && !root.finished
+            visible: !root.active
             label: strings.t("guard.label")
-            description: strings.t("guard.hint")
             checked: root.guard
             titleSize: Style.font.body
             foreground: root.ink
@@ -291,7 +275,7 @@ FocusScope {
             objectName: "startButton"
             visible: !root.active
             width: parent.width
-            text: strings.t(root.finished ? "action.again" : "action.start")
+            text: strings.t("action.start")
             bordered: true
             selected: true
             focusable: true
@@ -301,8 +285,8 @@ FocusScope {
             enabled: root.available
             opacity: enabled ? 1 : 0.45
             onClicked: {
-                if (root.finished) root.service.send("reset")
-                else { root.forceActiveFocus(); root.start() }
+                root.forceActiveFocus()
+                root.start()
             }
         }
 

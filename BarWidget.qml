@@ -54,18 +54,23 @@ BarWidget {
             open: panel.opened
             focusTarget: view
             contentWidth: fittedContentWidth(Style.space(420))
-            contentHeight: fittedContentHeight(view.implicitHeight)
+            contentHeight: fittedContentHeight(viewport.contentHeight)
 
             Flickable {
+                id: viewport
+                // Keep control borders inside the clip at fractional display scales.
+                readonly property int paintInset: Style.space(2)
                 anchors.fill: parent
                 contentWidth: width
-                contentHeight: view.implicitHeight
+                contentHeight: view.implicitHeight + paintInset * 2
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
 
                 FocusView {
                     id: view
-                    width: parent.width
+                    x: viewport.paintInset
+                    y: viewport.paintInset
+                    width: viewport.width - viewport.paintInset * 2
                     service: root.service
                     onCloseRequested: root.close()
                 }

@@ -8,6 +8,22 @@ ShellRoot {
     id: harness
     property string output: "@OUTPUT@"
     property string lastAction: ""
+    property var wave: {
+        const start = new Date(2026, 9, 28).getTime() / 1000
+        const result = []
+        for (let i = 0; i <= 156; i++) {
+            const hour = i % 24
+            const peak = [0.5, 0.95, 0.4, 0, 0.7, 1, 0.6][Math.floor(i / 24)]
+            const value = peak * Math.pow(Math.max(0, Math.cos((hour - 11) / 8 * Math.PI / 2)), 2) * (Math.abs(hour - 11) < 8 ? 1 : 0)
+            result.push({time: start + i * 3600, hours: value})
+        }
+        return result
+    }
+    property var week: [
+        {date: "2026-10-28", seconds: 3600}, {date: "2026-10-29", seconds: 7200},
+        {date: "2026-10-30", seconds: 1800}, {date: "2026-10-31", seconds: 0},
+        {date: "2026-11-01", seconds: 5400}, {date: "2026-11-02", seconds: 9000},
+        {date: "2026-11-03", seconds: 4500}]
     property var lastDetails: ({})
     property var config: ({mode: "deepwork", deepMinutes: 50, focusMinutes: 25, breakMinutes: 5,
         longBreakMinutes: 15, longBreakEvery: 4, rounds: 4, guard: true, intention: ""})
@@ -15,7 +31,7 @@ ShellRoot {
         property bool available: true
         property string failure: ""
         property var state: ({state: "idle", active: false, remaining: 0, settings: harness.config,
-            todayMinutes: 75, todaySessions: 2, error: "", guardError: ""})
+            todayMinutes: 75, todaySessions: 2, week: harness.week, wave: harness.wave, error: "", guardError: ""})
         function send(action, details) { harness.lastAction = action; harness.lastDetails = details || {} }
     }
     FloatingWindow {
@@ -73,8 +89,20 @@ ShellRoot {
                 mock.state = {state: "focus", active: true, remaining: 1368, progress: 0.544,
                     phase: "focus", mode: "deepwork", intention: "Ship the thing.", guard: true,
                     workspace: {id: 3, name: "3"}, round: 1, rounds: 1, settings: harness.config,
-                    todayMinutes: 75, todaySessions: 2, error: "", guardError: ""}
+                    todayMinutes: 75, todaySessions: 2, week: harness.week, wave: harness.wave, error: "", guardError: ""}
                 capture("focus")
+                const graph = find(view, "weekGraph")
+                compare(graph.days.length, 7)
+                const liveWeek = harness.week.map(day => Object.assign({}, day))
+                liveWeek[6].seconds += 60
+                mock.state = Object.assign({}, mock.state, {week: liveWeek})
+                wait(200)
+                compare(graph.days[6].seconds, 4560)
+                const liveWave = harness.wave.map(sample => Object.assign({}, sample))
+                liveWave[liveWave.length - 1].hours = 0.65
+                mock.state = Object.assign({}, mock.state, {wave: liveWave})
+                wait(200)
+                compare(graph.samples[graph.samples.length - 1].hours, 0.65)
                 harness.lastAction = ""
                 view.forceActiveFocus()
                 keyClick(Qt.Key_Space)
@@ -103,6 +131,19 @@ ShellRoot {
                 capture("break")
                 mock.state = Object.assign({}, mock.state, {state: "complete", active: false, remaining: 0})
                 capture("complete")
+                for (const outcome of ["complete", "cancelled"]) {
+                    mock.state = Object.assign({}, mock.state, {state: outcome})
+                    wait(20)
+                    verify(find(view, "intention").visible)
+                    verify(find(view, "focusMinutes").visible)
+                    harness.lastAction = ""
+                    mouseClick(start)
+                    compare(harness.lastAction, "start")
+                    harness.lastAction = ""
+                    view.forceActiveFocus()
+                    keyClick(Qt.Key_Space)
+                    compare(harness.lastAction, "start")
+                }
                 console.log("Panel checks passed")
             }
         }
